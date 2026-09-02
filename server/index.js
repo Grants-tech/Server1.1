@@ -5,6 +5,7 @@ const cron = require('node-cron');
 const analysisRouter = require('./routes/analysis');
 const { runAnalysis } = require('../lib/runAnalysis');
 const { getStatus } = require('../lib/signalNotifier');
+const { sendTestEmail } = require('../lib/mailer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,6 +32,17 @@ app.get('/health', (req, res) => {
 
 app.get('/api/signals/status', (req, res) => {
   res.json(getStatus());
+});
+
+// One-off check to confirm SMTP creds work, bypassing the confidence gate.
+// Protected by the same ACCESS_TOKEN auth as the rest of the API.
+app.get('/api/signals/test-email', async (req, res) => {
+  try {
+    await sendTestEmail();
+    res.json({ sent: true, message: `Test email sent to ${process.env.EMAIL_TO}` });
+  } catch (err) {
+    res.status(500).json({ sent: false, error: err.message });
+  }
 });
 
 app.use('/api/analysis', analysisRouter);
