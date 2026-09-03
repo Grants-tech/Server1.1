@@ -3,9 +3,11 @@ const express = require('express');
 const cron = require('node-cron');
 
 const analysisRouter = require('./routes/analysis');
-const { runAnalysis } = require('../lib/runAnalysis');
-const { getStatus } = require('../lib/signalNotifier');
+const { runAllAnalyses } = require('../lib/runAnalysis');
+const { getAllStatuses: getSignalStatuses } = require('../lib/signalNotifier');
+const { getAllStatuses: getBounceStatuses } = require('../lib/bounceNotifier');
 const { sendTestEmail } = require('../lib/mailer');
+const { getActiveSymbols } = require('../lib/symbols');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -30,11 +32,21 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-app.get('/api/signals/status', (req, res) => {
-  res.json(getStatus());
+app.get('/api/symbols', (req, res) => {
+  res.json(getActiveSymbols().map(({ slug, label }) => ({ slug, label })));
 });
 
-// One-off check to confirm SMTP creds work, bypassing the confidence gate.
+app.get('/api/signals/status', (req, res) => {
+  const slugs = getActiveSymbols().map((s) => s.slug);
+  res.json(getSignalStatuses(slugs));
+});
+
+app.get('/api/signals/bounce-status', (req, res) => {
+  const slugs = getActiveSymbols().map((s) => s.slug);
+  res.json(getBounceStatuses(slugs));
+});
+
+// One-off check to confirm email delivery works, bypassing the confidence gate.
 // Protected by the same ACCESS_TOKEN auth as the rest of the API.
 app.get('/api/signals/test-email', async (req, res) => {
   try {
@@ -52,18 +64,20 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`XAUUSD TA server listening on port ${PORT}`);
+  const symbols = getActiveSymbols();
+  console.log(`XAUUSD/Forex TA server listening on port ${PORT}`);
+  console.log(`Tracking symbols: ${symbols.map((s) => s.label).join(', ')}`);
   console.log(`Refresh schedule: "${CRON_SCHEDULE}"`);
 
   // Prime the cache on boot so the first request doesn't have to wait.
-  runAnalysis()
-    .then(() => console.log('Initial analysis computed and cached.'))
+  runAllAnalyses()
+    .then(() => console.log('Initial analysis computed and cached for all symbols.'))
     .catch((err) => console.error('Initial analysis failed:', err.message));
 
   cron.schedule(CRON_SCHEDULE, () => {
-    console.log(`[cron] Refreshing analysis at ${new Date().toISOString()}`);
-    runAnalysis()
-      .then(() => console.log('[cron] Analysis refreshed.'))
+    console.log(`[cron] Refreshing analysis for all symbols at ${new Date().toISOString()}`);
+    runAllAnalyses()
+      .then(() => console.log('[cron] Analysis refreshed for all symbols.'))
       .catch((err) => console.error('[cron] Refresh failed:', err.message));
   });
 });
