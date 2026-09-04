@@ -8,6 +8,7 @@ const { getAllStatuses: getSignalStatuses } = require('../lib/signalNotifier');
 const { getAllStatuses: getBounceStatuses } = require('../lib/bounceNotifier');
 const { sendTestEmail } = require('../lib/mailer');
 const { getActiveSymbols } = require('../lib/symbols');
+const { listSignals, getStats, closeSignal } = require('../lib/outcomeStore');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -54,6 +55,47 @@ app.get('/api/signals/test-email', async (req, res) => {
     res.json({ sent: true, message: `Test email sent to ${process.env.EMAIL_TO}` });
   } catch (err) {
     res.status(500).json({ sent: false, error: err.message });
+  }
+});
+
+// GET /api/signals/history?symbol=xauusd&status=open|closed
+app.get('/api/signals/history', (req, res) => {
+  try {
+    const { symbol, status } = req.query;
+    res.json(listSignals({ slug: symbol, status }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/signals/stats?symbol=xauusd  (omit symbol for stats across all tracked symbols)
+app.get('/api/signals/stats', (req, res) => {
+  try {
+    res.json(getStats({ slug: req.query.symbol }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/signals/:id/close  { outcome: "win"|"loss"|"breakeven", exitPrice, note }
+// Manual override — e.g. for a "TP: Open" runner you managed yourself
+// beyond what auto-tracking follows, or to correct an auto-close.
+app.post('/api/signals/:id/close', (req, res) => {
+  try {
+    const { outcome, exitPrice, note } = req.body || {};
+    if (!outcome || !['win', 'loss', 'breakeven'].includes(outcome)) {
+      return res.status(400).json({ error: 'outcome must be "win", "loss", or "breakeven".' });
+    }
+    const updated = closeSignal(req.params.id, {
+      outcome,
+      exitPrice: exitPrice ?? null,
+      exitTime: new Date().toISOString(),
+      note: note || 'Manually closed.',
+    });
+    if (!updated) return res.status(404).json({ error: `No signal found with id "${req.params.id}".` });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
